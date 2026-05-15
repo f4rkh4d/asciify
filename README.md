@@ -12,6 +12,12 @@ A small, single-binary Go tool in the spirit of [jp2a](https://github.com/Talinx
 
 ## Install
 
+### With Homebrew (macOS, Linux)
+
+```bash
+brew install f4rkh4d/tap/asciify
+```
+
 ### From a release binary
 
 ```bash

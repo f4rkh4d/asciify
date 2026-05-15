@@ -80,3 +80,91 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+
+  bump-tap:
+    needs: release
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Skip if HOMEBREW_TAP_TOKEN is unset
+        id: gate
+        run: |
+          if [ -n "${{ secrets.HOMEBREW_TAP_TOKEN }}" ]; then
+            echo "ok=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::HOMEBREW_TAP_TOKEN is not set; skipping Homebrew formula bump"
+          fi
+
+      - name: Checkout tap repo
+        if: steps.gate.outputs.ok == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: f4rkh4d/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: tap
+
+      - name: Compute new formula
+        if: steps.gate.outputs.ok == 'true'
+        id: compute
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/v}"
+          BASE="https://github.com/f4rkh4d/asciify/releases/download/v${VERSION}"
+          declare -A SHAS
+          for plat in darwin-arm64 darwin-amd64 linux-arm64 linux-amd64; do
+            curl -sSL -o "/tmp/asciify-${plat}.tar.gz" "${BASE}/asciify-${plat}.tar.gz"
+            SHAS[$plat]=$(sha256sum "/tmp/asciify-${plat}.tar.gz" | awk '{print $1}')
+          done
+          cat > tap/Formula/asciify.rb <<EOF
+          class Asciify < Formula
+            desc "Turn any image into ASCII art on your terminal"
+            homepage "https://github.com/f4rkh4d/asciify"
+            version "${VERSION}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/f4rkh4d/asciify/releases/download/v#{version}/asciify-darwin-arm64.tar.gz"
+                sha256 "${SHAS[darwin-arm64]}"
+              end
+              on_intel do
+                url "https://github.com/f4rkh4d/asciify/releases/download/v#{version}/asciify-darwin-amd64.tar.gz"
+                sha256 "${SHAS[darwin-amd64]}"
+              end
+            end
+
+            on_linux do
+              on_arm do
+                url "https://github.com/f4rkh4d/asciify/releases/download/v#{version}/asciify-linux-arm64.tar.gz"
+                sha256 "${SHAS[linux-arm64]}"
+              end
+              on_intel do
+                url "https://github.com/f4rkh4d/asciify/releases/download/v#{version}/asciify-linux-amd64.tar.gz"
+                sha256 "${SHAS[linux-amd64]}"
+              end
+            end
+
+            def install
+              bin.install "asciify"
+            end
+
+            test do
+              assert_match version.to_s, shell_output("#{bin}/asciify --version")
+            end
+          end
+          EOF
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push
+        if: steps.gate.outputs.ok == 'true'
+        working-directory: tap
+        run: |
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git add Formula/asciify.rb
+          if git diff --cached --quiet; then
+            echo "no changes"
+            exit 0
+          fi
+          git commit -m "asciify: bump to ${{ steps.compute.outputs.version }}"
+          git push
