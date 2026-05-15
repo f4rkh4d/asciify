@@ -32,18 +32,41 @@ const (
 	ColorTrue
 )
 
+// Mode selects which rendering strategy to use.
+type Mode int
+
+const (
+	// ModeASCII maps pixel brightness to a character from a ramp, then
+	// optionally tints it with a foreground color. One cell = one pixel.
+	ModeASCII Mode = iota
+	// ModeHalfBlock prints the Unicode upper half-block (U+2580) and uses
+	// foreground + background colors to encode two stacked pixels per cell.
+	// Doubles vertical resolution and bypasses the brightness-to-glyph step.
+	// Requires color (ColorMode != ColorNone).
+	ModeHalfBlock
+)
+
 // Options controls a single render. Zero values fall back to sane defaults.
 type Options struct {
 	Width      int       // target columns, default 80
 	Ramp       string    // characters from light to dark, default Ramps["standard"]
 	ColorMode  ColorMode // default ColorNone
-	Invert     bool      // swap light/dark mapping
+	Mode       Mode      // default ModeASCII
+	Invert     bool      // swap light/dark mapping (ASCII mode only)
 	CellAspect float64   // height/width of one terminal cell, default 2.0
 	Background color.Color
 }
 
-// Image converts a decoded image into a multi-line ASCII string.
+// Image converts a decoded image into a multi-line string ready to print.
 func Image(src image.Image, opts Options) string {
+	opts = withDefaults(opts)
+	if opts.Mode == ModeHalfBlock && opts.ColorMode != ColorNone {
+		return renderHalfBlock(src, opts)
+	}
+	return renderASCII(src, opts)
+}
+
+func withDefaults(opts Options) Options {
 	if opts.Width <= 0 {
 		opts.Width = 80
 	}
@@ -53,7 +76,10 @@ func Image(src image.Image, opts Options) string {
 	if opts.CellAspect <= 0 {
 		opts.CellAspect = 2.0
 	}
+	return opts
+}
 
+func renderASCII(src image.Image, opts Options) string {
 	bounds := src.Bounds()
 	srcW := bounds.Dx()
 	srcH := bounds.Dy()
@@ -66,14 +92,7 @@ func Image(src image.Image, opts Options) string {
 		height = 1
 	}
 
-	resized := image.NewRGBA(image.Rect(0, 0, opts.Width, height))
-	if opts.Background != nil {
-		bg := image.NewUniform(opts.Background)
-		draw.Draw(resized, resized.Bounds(), bg, image.Point{}, draw.Src)
-		draw.CatmullRom.Scale(resized, resized.Bounds(), src, bounds, draw.Over, nil)
-	} else {
-		draw.CatmullRom.Scale(resized, resized.Bounds(), src, bounds, draw.Src, nil)
-	}
+	resized := scale(src, opts.Width, height, opts.Background)
 
 	ramp := []rune(opts.Ramp)
 	if opts.Invert {
@@ -90,8 +109,6 @@ func Image(src image.Image, opts Options) string {
 			r, g, bl, _ := resized.At(x, y).RGBA()
 			r8, g8, b8 := uint8(r>>8), uint8(g>>8), uint8(bl>>8)
 			lum := luminance(r8, g8, b8)
-			// Ramp runs light->dark, so brighter pixels pick the early
-			// (sparser) glyphs. Hence (255 - lum) rather than lum.
 			idx := int((255.0 - lum) * float64(len(ramp)-1) / 255.0)
 			if idx < 0 {
 				idx = 0
@@ -115,6 +132,62 @@ func Image(src image.Image, opts Options) string {
 		b.WriteByte('\n')
 	}
 	return b.String()
+}
+
+func renderHalfBlock(src image.Image, opts Options) string {
+	bounds := src.Bounds()
+	srcW := bounds.Dx()
+	srcH := bounds.Dy()
+	if srcW == 0 || srcH == 0 {
+		return ""
+	}
+	// Each terminal row encodes two image rows, so the source is sampled at
+	// 2x the row count. With a 2:1 cell aspect, that makes pixels square in
+	// the final output.
+	rows := int(float64(opts.Width) * float64(srcH) / float64(srcW))
+	if rows%2 == 1 {
+		rows++
+	}
+	if rows < 2 {
+		rows = 2
+	}
+	resized := scale(src, opts.Width, rows, opts.Background)
+
+	var b strings.Builder
+	b.Grow((opts.Width*32 + 16) * (rows / 2))
+
+	for y := 0; y < rows; y += 2 {
+		for x := 0; x < opts.Width; x++ {
+			tr, tg, tb := rgb8(resized.At(x, y))
+			br, bg, bb := rgb8(resized.At(x, y+1))
+			switch opts.ColorMode {
+			case ColorTrue:
+				fmt.Fprintf(&b, "\x1b[38;2;%d;%d;%d;48;2;%d;%d;%dm▀",
+					tr, tg, tb, br, bg, bb)
+			case Color256:
+				fmt.Fprintf(&b, "\x1b[38;5;%d;48;5;%dm▀",
+					rgbTo256(tr, tg, tb), rgbTo256(br, bg, bb))
+			}
+		}
+		b.WriteString("\x1b[0m\n")
+	}
+	return b.String()
+}
+
+func scale(src image.Image, w, h int, bg color.Color) *image.RGBA {
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	if bg != nil {
+		draw.Draw(dst, dst.Bounds(), image.NewUniform(bg), image.Point{}, draw.Src)
+		draw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Over, nil)
+	} else {
+		draw.CatmullRom.Scale(dst, dst.Bounds(), src, src.Bounds(), draw.Src, nil)
+	}
+	return dst
+}
+
+func rgb8(c color.Color) (r, g, b uint8) {
+	r16, g16, b16, _ := c.RGBA()
+	return uint8(r16 >> 8), uint8(g16 >> 8), uint8(b16 >> 8)
 }
 
 // luminance returns a perceptual brightness in [0, 255] using Rec. 601.

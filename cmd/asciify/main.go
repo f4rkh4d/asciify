@@ -57,8 +57,9 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	width := fs.Int("w", 0, "output width in columns (0 = autodetect terminal)")
 	ramp := fs.String("ramp", render.DefaultRamp, "named ramp from the table below, or a custom string of characters")
+	mode := fs.String("mode", "auto", `render mode: "ascii", "half-block", or "auto" (half-block when color is on, ascii otherwise)`)
 	colorMode := fs.String("color", "auto", `color mode: "none", "256", "true", or "auto" (truecolor if $COLORTERM is set, otherwise 256)`)
-	invert := fs.Bool("invert", false, "swap light and dark mapping; useful for dark terminals with bright images")
+	invert := fs.Bool("invert", false, "swap light and dark mapping (ASCII mode only)")
 	bg := fs.String("bg", "", "background color for images with transparency: \"black\", \"white\", or \"#RRGGBB\"")
 	animate := fs.Bool("animate", true, "for GIFs, play frames in place; set --animate=false to print only the first frame")
 	loop := fs.Int("loop", 1, "for animated GIFs, number of loops to play; 0 means forever")
@@ -108,6 +109,11 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return err
 	}
 
+	m, err := parseMode(*mode, cm)
+	if err != nil {
+		return err
+	}
+
 	w := *width
 	if w == 0 {
 		w = detectWidth(stdout)
@@ -127,6 +133,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		Width:      w,
 		Ramp:       rampGlyphs,
 		ColorMode:  cm,
+		Mode:       m,
 		Invert:     *invert,
 		Background: bgColor,
 	}
@@ -147,6 +154,22 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 
 	fmt.Fprint(stdout, render.Image(img, opts))
 	return nil
+}
+
+func parseMode(s string, cm render.ColorMode) (render.Mode, error) {
+	switch strings.ToLower(s) {
+	case "ascii", "ramp", "char", "chars":
+		return render.ModeASCII, nil
+	case "half-block", "halfblock", "half", "block", "blocks":
+		return render.ModeHalfBlock, nil
+	case "auto":
+		if cm == render.ColorNone {
+			return render.ModeASCII, nil
+		}
+		return render.ModeHalfBlock, nil
+	default:
+		return 0, fmt.Errorf("unknown render mode %q (want ascii / half-block / auto)", s)
+	}
 }
 
 func parseColorMode(s string) (render.ColorMode, error) {

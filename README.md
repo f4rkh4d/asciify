@@ -1,6 +1,6 @@
 # asciify
 
-> Turn any image into ASCII art on your terminal. JPEG, PNG, GIF, WebP. 24-bit color. Animated GIFs play in place.
+> Turn any image into ASCII art on your terminal. JPEG, PNG, GIF, WebP. 24-bit color. Half-block mode that doubles vertical resolution for photo-quality renders. Animated GIFs play in place.
 
 <p align="center">
   <img alt="Go" src="https://img.shields.io/badge/go-1.22%2B-00ADD8?style=flat-square">
@@ -38,15 +38,26 @@ go build -o asciify ./cmd/asciify
 ## Usage
 
 ```bash
-asciify picture.jpg              # 80-col, auto-color, default ramp
-asciify -w 120 photo.png         # wider output
+asciify picture.jpg              # auto width, auto color, half-block render
+asciify -w 120 photo.png         # 120 columns
+asciify --mode ascii photo.jpg   # classic glyph ramp (jp2a-style)
 asciify --color none cat.gif     # plain text, no ANSI escapes
-asciify --color true mona.jpg    # 24-bit truecolor
-asciify --ramp blocks logo.png   # rendered with Unicode block glyphs
+asciify --color true mona.jpg    # explicit 24-bit truecolor
+asciify --ramp blocks logo.png   # ASCII mode with Unicode block glyphs
 asciify --invert dark-on-dark.png
 
 cat picture.jpg | asciify -      # read from stdin
 ```
+
+### Render modes
+
+| Mode         | What it does                                                                                  |
+| ------------ | --------------------------------------------------------------------------------------------- |
+| `half-block` | Each terminal cell encodes two stacked pixels via `▀` + fg/bg colors. Doubles vertical resolution. Default when color is on. |
+| `ascii`      | Classic jp2a-style: pixel brightness maps to a character from a ramp; color tints the glyph.   |
+| `auto`       | Picks `half-block` if color is on, `ascii` if `--color none`.                                 |
+
+Half-block makes a real difference on photos because it preserves color faithfully and gives you twice the vertical detail. ASCII mode is the right choice for monochrome terminals, logs, or any place where the output needs to be readable as plain text.
 
 ### Animated GIFs
 
@@ -61,9 +72,10 @@ asciify --animate=false single-frame.gif         # print first frame only
 | Flag         | Default      | Description                                                        |
 | ------------ | ------------ | ------------------------------------------------------------------ |
 | `-w`         | terminal w   | output width in columns; 0 autodetects terminal size               |
-| `--ramp`     | `standard`   | named ramp or a custom string of characters                        |
+| `--mode`     | `auto`       | `ascii`, `half-block`, or `auto`                                   |
+| `--ramp`     | `standard`   | ASCII mode: named ramp or a custom string of characters            |
 | `--color`    | `auto`       | `none`, `256`, `true`, or `auto` (picks based on `$COLORTERM`)     |
-| `--invert`   | `false`      | swap light and dark mapping                                        |
+| `--invert`   | `false`      | swap light and dark mapping (ASCII mode only)                      |
 | `--bg`       | `none`       | background color for transparent pixels: `black`, `white`, `#RRGGBB` |
 | `--animate`  | `true`       | for GIFs, play frames in place                                     |
 | `--loop`     | `1`          | how many times to play an animation; `0` means forever             |
@@ -86,9 +98,11 @@ Or pass a custom ramp: `--ramp ' .,-+*#'`.
 The pipeline is small and boring on purpose:
 
 1. **Decode.** `image/jpeg`, `image/png`, `image/gif` come from the Go standard library; WebP is handled by `golang.org/x/image/webp`. New formats slot in by adding a side-effect import.
-2. **Resize.** Catmull-Rom scale to the target width, with the height multiplied by `1/cellAspect` (default `0.5`) because terminal cells are about twice as tall as they are wide.
-3. **Map brightness to glyph.** Rec. 601 luminance picks an index into the chosen ramp.
-4. **Optionally color.** Per-pixel RGB is emitted as either 24-bit `\x1b[38;2;...m` or a nearest match in the xterm 256-color cube.
+2. **Resize.** Catmull-Rom scale to the target width. ASCII mode halves the height to compensate for the 2:1 cell aspect; half-block mode keeps it 1:1 because each cell encodes two pixels.
+3. **Render.**
+   - *ASCII mode*: Rec. 601 luminance picks a glyph from the ramp; per-pixel RGB optionally tints it.
+   - *Half-block mode*: each cell becomes `\x1b[38;2;TopRGB;48;2;BotRGBm▀`, packing two pixel colors into one terminal cell.
+4. **Reset.** End every row with `\x1b[0m` so the terminal state stays clean.
 
 For animated GIFs the frames are composed into a single RGBA canvas (so disposal modes don't ghost), rendered up-front, then printed one at a time with `\x1b[H\x1b[J` between them.
 
