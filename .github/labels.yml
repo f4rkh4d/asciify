@@ -1,0 +1,30 @@
+- name: bug
+  color: "d73a4a"
+  description: Something isn't working
+- name: enhancement
+  color: "a2eeef"
+  description: New feature or improvement
+- name: image-format
+  color: "fbca04"
+  description: Decoding a new or broken image format
+- name: terminal-compat
+  color: "5319e7"
+  description: Issues specific to a terminal emulator
+- name: performance
+  color: "0e8a16"
+  description: Speed or memory improvement
+- name: good first issue
+  color: "7057ff"
+  description: Good entry point for new contributors
+- name: help wanted
+  color: "008672"
+  description: Extra attention is welcome
+- name: question
+  color: "d876e3"
+  description: Further information is requested
+- name: documentation
+  color: "0075ca"
+  description: README, docs, or comments
+- name: ci
+  color: "ededed"
+  description: GitHub Actions, release pipeline

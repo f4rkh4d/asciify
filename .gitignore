@@ -1,0 +1,15 @@
+# Build artifacts
+/asciify
+/dist/
+*.exe
+
+# Go
+*.test
+*.out
+coverage.txt
+
+# OS / Editors
+.DS_Store
+.vscode/
+.idea/
+*.swp
